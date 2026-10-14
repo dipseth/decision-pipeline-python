@@ -1,6 +1,24 @@
-# decision-pipeline (Python)
+<h1 align="center">decision-pipeline</h1>
 
-**Let models estimate. Let code decide. Let people correct it later.**
+<p align="center">
+  <b>Let models estimate. Let code decide. Let people correct it later.</b><br>
+  The Python port of the decision-pipeline core: LLM features you can trace, tune and trust.
+</p>
+
+<p align="center">
+  <a href="https://github.com/dipseth/decision-pipeline-python/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/dipseth/decision-pipeline-python/ci.yml?branch=main&style=flat-square&label=tests" alt="tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5F9D8A?style=flat-square" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/runtime%20deps-pydantic%20only-9C8A45?style=flat-square" alt="Runtime dependencies: pydantic only">
+</p>
+
+<p align="center">
+  <img src="assets/your-logic-here.jpg" height="260" alt="A cartoon geisha holds up a postcard reading 'YOUR LOGIC HERE'">
+  &nbsp;
+  <img src="assets/welcome-to-doom.jpg" height="260" alt="The same postcard: 'Welcome to you're DOOM!'">
+</p>
+
+---
 
 The Python port of the [decision-pipeline](https://github.com/dipseth/decision-pipeline) core (that repo's README explains the ideas; this one documents the Python package). It is the same core as the TypeScript package: the same manifest contract (`define_pipeline` checks the same rules and lists every violation at once), the same run record, and the same hashes, versions and fingerprints, so a run's composite version, cache keys and experiment arms come out identical in both languages. The only runtime dependency is [`pydantic`](https://docs.pydantic.dev) (v2). Your models, database and tracer plug in as ports, so the tests need no network.
 
@@ -221,7 +239,15 @@ explanation = await explain_pipeline(pipeline.to_json(), level="eli10", title="S
                                      language_name="Spanish", generate=my_model)   # generate(prompt) -> str
 ```
 
-See [Draw any pipeline](https://github.com/dipseth/decision-pipeline#draw-any-pipeline) and [Explain any pipeline](https://github.com/dipseth/decision-pipeline#explain-any-pipeline).
+The two production pipelines from the TypeScript README, drawn by this package (the output is identical to the TypeScript renderer, byte for byte). Left, **Scale**; right, **Cuisine tagging**:
+
+<p align="center">
+  <img src="assets/pipeline-scale.svg" alt="The Scale pipeline: classify → table → gate ⑂ direct | writer → agent ⑂ quick | full → guard → changes → persist, with the scaling-notes surface feeding back" width="46%">
+  &nbsp;
+  <img src="assets/pipeline-cuisine.svg" alt="The cuisine pipeline: taxonomy → decide → evidence → route ⑂ jev_leaf | jev_only | tail | gemini_flat → persist, with the cuisine-chip surface feeding back three ways" width="52%">
+</p>
+
+See [Draw any pipeline](https://github.com/dipseth/decision-pipeline#draw-any-pipeline) and [Explain any pipeline](https://github.com/dipseth/decision-pipeline#explain-any-pipeline) for how to read them.
 
 ## Develop
 
