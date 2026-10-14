@@ -1,0 +1,54 @@
+[project]
+name = "decision-pipeline"
+version = "0.1.0"
+description = "Let models estimate, let code decide, let people correct it later: a declared-DAG core for traceable, tunable LLM features. Python port of @rivers/decision-pipeline."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Seth Rivers" }]
+keywords = ["llm", "decision-pipeline", "dag", "gating", "evaluation", "experiments", "langfuse"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = ["pydantic>=2.5"]
+
+[project.optional-dependencies]
+# `decision_pipeline.jsonata` — the JSONata ExpressionEngine for JSON specs. Bring it yourself, like the TS package.
+jsonata = ["jsonata-python>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/dipseth/decision-pipeline-python"
+Repository = "https://github.com/dipseth/decision-pipeline-python"
+"TypeScript package" = "https://github.com/dipseth/decision-pipeline"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "jsonata-python>=0.6", "mypy>=1.10"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["decision_pipeline"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:decision_pipeline.*"]
+
+[tool.uv]
+# The system Python is 3.9; the package needs 3.10+.
+python-preference = "managed"
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
