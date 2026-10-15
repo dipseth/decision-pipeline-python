@@ -54,6 +54,9 @@ class RunRecordNode:
     #: decide nodes with `probes`: the TEXT of every probe asked, what was dropped and why,
     #: and which went unanswered.
     probes: Optional["ProbeRecord"] = None
+    #: decide nodes that asked Box questions: the raw box answers. Their confidences also sit in
+    #: `distributions`; the edges live only here.
+    boxes: Optional[dict[str, Any]] = None
     #: gate nodes: the values actually used, after env / prompt-config override.
     thresholds: Optional[dict[str, float]] = None
     #: generate nodes: `{"offered", "selected", "called", "dropped_for_scope"}`.

@@ -77,33 +77,49 @@ const { output, route, record } = await runPipeline(triage, { id: "t-42", text: 
 
 ## Node bodies
 
-Every body receives `NodeRunArgs { input, from, in, primary, ctx, thresholds, node, branches, probes, signal }`.
+Every body receives `NodeRunArgs { input, from, in, primary, ctx, thresholds, node, branches, probes, boxes, signal }`.
 `signal` is an `AbortSignal` that aborts when the run is cancelled or the node's `timeoutMs` passes; a
 port should pass it to its HTTP call. Throw `NodeSkipped(reason)` to opt out of running (recorded as a skip);
 a `NodeTimeoutError` is what `onFailure` sees past the deadline.
 `primary` is the first inbound node's output (the pipeline input at a root). A gate returns a branch name
-or `{ branch, reason?, confidence? }`; `confidence` becomes `fact_confidence`. `interpret(distributions, args)`
+or `{ branch, reason?, confidence? }`; `confidence` becomes `fact_confidence`. `interpret(distributions, args, boxes)`
 on a decide node turns raw distributions into the value downstream sees; the record keeps the distributions.
+`boxes` (and `args.boxes.<decideNode>.<question>` for every later node, gates included) holds checked Box answers.
 
 ## A decide port backed by Jev
 
 ```ts
+import { JEV_ENDPOINT, JEV_MODEL, checkJevRequest, jevAnswersToDecideResult, jevHeaders, type DecidePort } from "@rivers/decision-pipeline";
+
 export const jevDecide: DecidePort = async (req) => {
   const probes = Object.fromEntries(Object.entries(req.probes).map(([k, { why, ...q }]) => [k, q]));
-  const res = await fetch("https://api.typesafe.ai/v1/systemone", {
+  const body = { model: JEV_MODEL, state: buildState(req.input), questions: { ...loadQuestions(req.questions), ...probes } };
+  const problems = checkJevRequest(body);
+  if (problems.length) throw new Error(problems.join("; "));
+  const res = await fetch(JEV_ENDPOINT, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${process.env.TYPESAFE_API_KEY}` },
-    body: JSON.stringify({ model: "jev-1.13.0", state: buildState(req.input), questions: { ...loadQuestions(req.questions), ...probes } }),
+    headers: { "content-type": "application/json", ...jevHeaders(process.env.TYPESAFE_API_KEY!, body) },
+    body: JSON.stringify(body),
   });
   const { answers, usage } = await res.json();
-  const distributions: Record<string, number[]> = {}, distributionOptions: Record<string, string[]> = {};
-  for (const [key, a] of Object.entries<any>(answers)) {
-    if (typeof a.noul === "number") { distributions[key] = [a.noul]; distributionOptions[key] = ["true"]; }
-    else if (a.probabilities) { distributionOptions[key] = Object.keys(a.probabilities); distributions[key] = Object.values(a.probabilities); }
-  }
-  return { distributions, distributionOptions, costUsd: usage.input_tokens * 0.042e-6 };
+  return jevAnswersToDecideResult(answers, { usage, costUsd: (u) => (u.input_tokens ?? 0) * 0.042e-6 });
 };
 ```
+
+`JEV_MODEL` is `jev-1.14.0`. `jevHeaders(key, body, { longContext? })` adds `TypeSafe-Danger-Zone-Images: true`
+when the request has an image asset or a Box question (images work on 1.13 too), and
+`TypeSafe-Danger-Zone-Long-Context: true` only when asked; `checkJevRequest` refuses a Box on a pre-1.14 model
+(`jevSupportsBox`) or a Box with `criteria`.
+
+## Box (Jev 1.14)
+
+A Box question (`{ type: "box", instructions: "the coffee mug in \`photo\`" }`) answers
+`{ box: { top, bottom, left, right }, confidence }`, edges as fractions of the image. The port returns them as
+`DecideResult.boxes`; the runtime checks them (bad box = node failure), records `boxes` on the node, mirrors each
+confidence into `distributions[key] = [confidence]` (option `"confidence"`), and adds `<node>.<q>.box_area`,
+`.box_cx`, `.box_cy` features. A Box never says "not found": ask a Noul beside it and gate on both. Helpers in
+`./box`: `boxToPixels`, `padBox`, `boxIoU`, `tileBoxes`, `boxFromTile`, `edgeCheckQuestions`, `expandBoxEdges`,
+`checkBoxAnswer`. Fixture to copy: `src/box.test.ts` (Noul + Box → gate → crop / pad_crop / none).
 
 ## Develop
 

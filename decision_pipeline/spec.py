@@ -14,8 +14,8 @@ A spec's code node is one of
 Expressions go through an injected `ExpressionEngine` (JSONata in
 `decision_pipeline.jsonata`). An expression sees the node's resolved `inputs`
 as its root (or `from`, by node id, when it declares none) and `$input`, `$t`
-(thresholds), `$primary`, `$branches`, `$probes` (never for a gate) and the
-registry's functions as bindings.
+(thresholds), `$primary`, `$branches`, `$probes` (never for a gate), `$boxes`
+(decide node -> its Box answers) and the registry's functions as bindings.
 
 A compiled node's version is the declared one plus a hash of its body
 (`1~3fa9…`): editing an expression IS a new node version.
@@ -125,7 +125,7 @@ def primitive_ref(p: Any) -> str:
 
 
 #: Names an expression already has — a registry function may not shadow them.
-RESERVED_BINDINGS = ["input", "t", "primary", "branches", "probes"]
+RESERVED_BINDINGS = ["input", "t", "primary", "branches", "probes", "boxes"]
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -533,6 +533,7 @@ def compile_pipeline_spec(json: Any, registry: SpecRegistry, engine: ExpressionE
             "primary": to_plain(args.primary),
             "branches": to_plain(args.branches),
             "probes": {} if gate else to_plain(args.probes),
+            "boxes": to_plain(args.boxes),
         }
 
     def root_for(args: NodeRunArgs, declares_inputs: bool) -> Any:

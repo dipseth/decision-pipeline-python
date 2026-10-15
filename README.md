@@ -137,40 +137,54 @@ Nodes and edges are plain `@dataclass(kw_only=True)` classes (`ReadNode`, `Decid
 
 ## A decide port backed by Jev
 
-The same short port as the [root README](https://github.com/dipseth/decision-pipeline#jev-llms-and-code-who-does-what), async, on `httpx`. It is illustrative and not run here; `load_questions` and `build_state` are yours.
+The same short port as the [root README](https://github.com/dipseth/decision-pipeline#jev-llms-and-code-who-does-what), async, on `httpx`. It is illustrative and not run here; `load_questions` and `build_state` are yours. The wire helpers (`jev_answers_to_decide_result`, `jev_headers`, `check_jev_request`) ship with the package.
 
 ```python
 import os
 
 import httpx
 
-from decision_pipeline import DecideRequest, DecideResult
+from decision_pipeline import (
+    JEV_ENDPOINT, JEV_MODEL, DecideRequest, DecideResult,
+    check_jev_request, jev_answers_to_decide_result, jev_headers,
+)
 
 
 async def jev_decide(req: DecideRequest) -> DecideResult:
     probes = {slot: {k: v for k, v in q.items() if k != "why"} for slot, q in req.probes.items()}  # `why` is for humans only
-    questions = {**load_questions(req.questions), **probes}  # your fixed set + this run's probes
+    body = {
+        "model": JEV_MODEL,  # "jev-1.14.0"
+        "state": build_state(req.input),
+        "questions": {**load_questions(req.questions), **probes},  # your fixed set + this run's probes
+    }
+    if problems := check_jev_request(body):  # e.g. a Box sent to jev-1.13.0
+        raise ValueError("; ".join(problems))
     async with httpx.AsyncClient() as client:
-        res = await client.post(
-            "https://api.typesafe.ai/v1/systemone",
-            headers={"authorization": f"Bearer {os.environ['TYPESAFE_API_KEY']}"},
-            json={"model": "jev-1.13.0", "state": build_state(req.input), "questions": questions},
-        )
-    body = res.json()
+        res = await client.post(JEV_ENDPOINT, headers=jev_headers(os.environ["TYPESAFE_API_KEY"], body), json=body)
+    data = res.json()
+    # noul -> [p], choice/score -> one probability per option, box -> `boxes` (see below)
+    return jev_answers_to_decide_result(data["answers"], usage=data["usage"], cost_usd=lambda u: u.get("input_tokens", 0) * 0.042e-6)
+```
 
-    distributions: dict[str, list[float]] = {}
-    options: dict[str, list[str]] = {}
-    for key, a in body["answers"].items():
-        if isinstance(a.get("noul"), (int, float)):
-            distributions[key], options[key] = [a["noul"]], ["true"]
-        elif a.get("probabilities"):
-            options[key] = list(a["probabilities"].keys())
-            distributions[key] = list(a["probabilities"].values())
-    return DecideResult(
-        distributions=distributions,
-        distribution_options=options,
-        cost_usd=body["usage"]["input_tokens"] * 0.042e-6,
-    )
+## Box: find where something is in an image
+
+TypeSafe's October 2026 release puts three "danger zone" features behind per-request headers: **images** on every Jev, `jev-1.13.0` included (`TypeSafe-Danger-Zone-Images: true`), **longer context** (`TypeSafe-Danger-Zone-Long-Context: true`), and the **Box** question type on `jev-1.14.0` only: `` {"type": "box", "instructions": "the coffee mug in `photo`"} `` is answered with four edges as fractions of the image plus a `confidence`. They are dreamer-ready, not production-ready. `jev_headers` adds the images header when a request carries an image or a Box, and the long-context one only with `long_context=True`. The full write-up is in the [root README](https://github.com/dipseth/decision-pipeline#box-find-where-something-is-in-an-image); in short:
+
+- The decide port returns boxes under `DecideResult.boxes`. The runtime checks each one (a bad box fails the node), records it on the node as `boxes`, and mirrors its confidence into `distributions` as `[confidence]` (option `"confidence"`), so a gate thresholds a Box exactly like a Noul.
+- The edges reach code as `args.boxes["<decide node>"]["<question>"]` (`$boxes` in a JSON spec) and as an optional third argument to `interpret(distributions, args, boxes)`. The decide node's value keeps its shape.
+- There is no "not found": ask a Noul ("Is there a coffee mug in `photo`?") beside the Box and gate on both.
+- Geometry stays in code: `box_to_pixels` (PIL crop order), `pad_box`, `box_iou`, `tile_boxes` + `box_from_tile`, `edge_check_questions` + `expand_box_edges`. The record gains `<node>.<question>.box_area`, `.box_cx`, `.box_cy`.
+
+```python
+from PIL import Image
+from decision_pipeline import CodeNode, box_to_pixels, pad_box
+
+pad_crop = CodeNode(
+    role="derive", version="1", thresholds={"pad": 0.05},
+    run=lambda a: Image.open(a.input.path).crop(tuple(box_to_pixels(
+        pad_box(a.boxes["locate"]["mug"]["box"], a.thresholds["pad"]), a.input.width, a.input.height,
+    ).values())),
+)
 ```
 
 ## What maps to what

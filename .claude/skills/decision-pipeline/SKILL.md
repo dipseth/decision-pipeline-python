@@ -102,7 +102,7 @@ Minimal manifests for both languages are in the reference files. Copy the shape,
 ## 4. The decide port and Jev
 
 The `decide` port receives one request per decide node and returns `distributions` (mandatory, keyed by
-question) plus `distributionOptions`, optional `value` and `costUsd`. Any model that returns probabilities
+question) plus `distributionOptions`, optional `boxes`, `value` and `costUsd`. Any model that returns probabilities
 works; the package was built around Jev (TypeSafe), a calibrated evaluator that answers many questions
 about one state in one request. Rules learned in production:
 
@@ -112,7 +112,25 @@ about one state in one request. Rules learned in production:
 - **Tune each threshold against its own question type.** A yes/no (`noul`) probability is absolute; a
   `choice` is relative to its options.
 - **Math, counting, dates and filtering go in code**, not in a question.
-- **Pin the model version** once thresholds are tuned.
+- **Pin the model version** (`jev-1.14.0`, the package's `JEV_MODEL`) once thresholds are tuned; moving
+  model versions is a challenger, re-tune gates on its records. `jev-latest` moves to 1.14.0 a week after
+  release, so a pipeline on the alias changes model under its thresholds.
+
+The package ships the wire helpers so a port is just the HTTP call: `jevAnswersToDecideResult` /
+`jev_answers_to_decide_result` (noul → `[p]`, choice/score → per option, box → `boxes`), `jevHeaders` (adds
+`TypeSafe-Danger-Zone-Images: true` for an image or a Box; `TypeSafe-Danger-Zone-Long-Context: true` only when
+asked) and `checkJevRequest` (a Box on a pre-1.14 model, a Box with criteria). Images work on every Jev, 1.13
+included, anywhere in the JSON (state, instructions, criteria); every model is weaker on images than text,
+so decompose image questions finely. All danger-zone features are dreamer-ready, not production-ready.
+
+**Box (Jev 1.14, images)** answers *where* something is: four edges as image fractions plus a `confidence`.
+It is an estimate, so it stays inside a `decide` node, no new node kind. The runtime checks each box, records
+it as `boxes` on the node, mirrors its confidence into `distributions` as `[confidence]` (so a gate thresholds
+it like a Noul), and adds `<node>.<q>.box_area/box_cx/box_cy` features. Code reads the edges from
+`args.boxes.<decide>.<q>` (`$boxes` in JSON specs, or `interpret`'s third argument). A Box never says "not
+found": ask a Noul beside it and gate on both. Cropping, padding (`padBox`), tiling (`tileBoxes`,
+`boxFromTile`) and edge checks (`edgeCheckQuestions`, `expandBoxEdges`) are code; a redrawn box scored with
+`boxIoU` is a natural `score` feedback edge. Probes stay noul/choice/score.
 
 **Probes** let an upstream `generate` node write a few extra questions for *this* input
 (`probes: { from, max, paths }` on the decide node). The runtime validates them (schema, cap of 8,

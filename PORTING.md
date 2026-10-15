@@ -61,6 +61,12 @@ identical here. Goal: a TS run and a Python run of the same manifest produce the
 - Timestamps: TS `new Date(ms).toISOString()` → `iso_from_ms(ms)` (`_compat.py`), which
   produces `2023-11-14T22:13:20.000Z` (milliseconds, `Z`). `Date.parse(iso)` → `ms_from_iso(iso)`.
 - `clock()` returns **milliseconds** (like `Date.now()`), as a number.
+- Small JSON shapes that are wire data, not config, stay plain dicts with a `TypedDict` for the
+  type checker: `Box`, `BoxAnswer`, a `ProbeQuestion`. They land on the record as-is.
+- TS `Math.round` rounds half up; Python's `round` rounds half to even. Where a rounded number is
+  output (`box_to_pixels`), use `math.floor(v + 0.5)` so both languages give the same pixels.
+- A TS callback that grew a trailing argument keeps working at its old arity here: `interpret` is
+  called with `(distributions, args, boxes)` only when it accepts three positional arguments.
 
 ## Sync or async
 

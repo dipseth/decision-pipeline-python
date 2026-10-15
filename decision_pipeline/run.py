@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Sequence, Union
@@ -21,6 +22,7 @@ from .bindings import resolve_inputs
 from .define import DecisionPipeline, FeatureExtractionArgs
 from .errors import MissingPortError, NodeFailedError, NodeSkipped, NodeTimeoutError, UnknownBranchError
 from .experiments import ArmAssignment, ManifestPatch, assign_arm, merge_patches
+from .box import BOX_CONFIDENCE_OPTION, box_features, check_box_answer
 from .features import distribution_features
 from .graph import resolve_inbound
 from .hash import short_hash
@@ -136,6 +138,18 @@ def normalize_gate(result: Any) -> BranchTaken:
             confidence=confidence if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) else None,
         )
     return BranchTaken(branch=str(result))
+
+
+def _takes_boxes(fn: Any) -> bool:
+    """Whether an `interpret` accepts the TS signature's third argument (`boxes`)."""
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params):
+        return True
+    positional = [p for p in params if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    return len(positional) >= 3
 
 
 def _as_decide_result(value: Any) -> DecideResult:
@@ -317,6 +331,9 @@ async def run_pipeline(
         per_run_cache: dict[str, Any] = {}
         #: Decide node id -> its answered probes. Never handed to a gate.
         probes_by_node: dict[str, Sequence[ProbeAnswer]] = {}
+        #: Decide node id -> its checked Box answers. Gates see these.
+        boxes_by_node: dict[str, dict[str, Any]] = {}
+        decide_boxes: list[Any] = []
         probe_feature_values: dict[str, float] = {}
         cost_usd = 0.0
         last_gate_confidence: Optional[float] = None
@@ -422,6 +439,7 @@ async def run_pipeline(
                 node=NodeRef(id=nid, version=n.version),
                 branches=verdicts,
                 probes=NO_PROBES if is_gate_node(n) else probes_by_node,
+                boxes=boxes_by_node,
                 signal=signal,
             )
 
@@ -506,26 +524,56 @@ async def run_pipeline(
                             )
                         )
                     )
+                    # Boxes are estimates like any distribution: checked here
+                    # (a bad one fails the node, so on_failure decides), recorded,
+                    # and their confidence mirrored into `distributions` so a gate
+                    # thresholds a Box exactly as it does a Noul.
+                    boxes: dict[str, Any] = {}
+                    distributions = result.distributions
+                    distribution_options = result.distribution_options
+                    if result.boxes:
+                        bad = [(k, why) for k, a in result.boxes.items() if (why := check_box_answer(a)) is not None]
+                        if bad:
+                            raise Exception("bad box answer: " + "; ".join(f"{k} ({why})" for k, why in bad))
+                        distributions = dict(distributions)
+                        opts = dict(distribution_options or {})
+                        for k, a in result.boxes.items():
+                            boxes[k] = {"box": dict(a["box"]), "confidence": a["confidence"]}
+                            if k not in distributions:
+                                distributions[k] = [a["confidence"]]
+                                opts[k] = [BOX_CONFIDENCE_OPTION]
+                        distribution_options = opts
+                        _entry.boxes = boxes
                     # The record keeps EVERY distribution (replay needs the
                     # probes too); gates, `interpret` and the per-question
                     # features see only the static questions.
-                    _entry.distributions = result.distributions
-                    if result.distribution_options:
-                        _entry.distribution_options = result.distribution_options
+                    _entry.distributions = distributions
+                    if distribution_options:
+                        _entry.distribution_options = distribution_options
                     if result.batch_trace_id:
                         _entry.batch_trace_id = result.batch_trace_id
                     _entry.cost_reported = result.cost_usd is not None
                     _entry.cost_usd = result.cost_usd or 0
                     cost_usd += _entry.cost_usd
-                    fixed = split_probe_distributions(result.distributions).fixed
+                    fixed = split_probe_distributions(distributions).fixed
                     decide_distributions.append({"node_id": _nid, "distributions": fixed})
+                    fixed_boxes = {k: v for k, v in boxes.items() if k in fixed}
+                    if fixed_boxes:
+                        decide_boxes.append({"node_id": _nid, "boxes": fixed_boxes})
+                        boxes_by_node[_nid] = fixed_boxes
                     if probe_record:
-                        pa = probe_answers(probe_record.asked, result.distributions, result.distribution_options)
+                        pa = probe_answers(probe_record.asked, distributions, distribution_options)
                         probe_record.unanswered = pa.unanswered
                         probes_by_node[_nid] = pa.answers
                         probe_feature_values.update(probe_features(_nid, probe_record, pa.answers))
+                    # The value keeps its shape whether or not a Box was asked (its
+                    # confidence is in `fixed`); the edges reach later nodes on
+                    # `args.boxes`, and `interpret` here.
                     if _n.interpret:
-                        value = await maybe_await(_n.interpret(fixed, _args))
+                        if _takes_boxes(_n.interpret):
+                            value = await maybe_await(_n.interpret(fixed, _args, MappingProxyType(fixed_boxes)))
+                        else:
+                            value = await maybe_await(_n.interpret(fixed, _args))
                     else:
                         value = result.value if result.value is not None else fixed
                     finish(value, span)
@@ -727,6 +775,7 @@ async def run_pipeline(
 
         features: dict[str, float] = {
             **distribution_features(decide_distributions),
+            **box_features(decide_boxes),
             **probe_feature_values,
             **(pipeline.features(FeatureExtractionArgs(input=input, outputs=outputs, branches=branches, ctx=ctx)) if pipeline.features else {}),
             "nodes_ran": len(ran),
