@@ -113,12 +113,15 @@ about one state in one request. Rules learned in production:
   `choice` is relative to its options.
 - **Math, counting, dates and filtering go in code**, not in a question.
 - **Pin the model version** (`jev-1.14.0`, the package's `JEV_MODEL`) once thresholds are tuned; moving
-  model versions is a challenger, re-tune gates on its records.
+  model versions is a challenger, re-tune gates on its records. `jev-latest` moves to 1.14.0 a week after
+  release, so a pipeline on the alias changes model under its thresholds.
 
 The package ships the wire helpers so a port is just the HTTP call: `jevAnswersToDecideResult` /
 `jev_answers_to_decide_result` (noul → `[p]`, choice/score → per option, box → `boxes`), `jevHeaders` (adds
-`TypeSafe-Danger-Zone-Images: true` for an image or a Box) and `checkJevRequest` (a Box on a pre-1.14 model,
-a Box with criteria).
+`TypeSafe-Danger-Zone-Images: true` for an image or a Box; `TypeSafe-Danger-Zone-Long-Context: true` only when
+asked) and `checkJevRequest` (a Box on a pre-1.14 model, a Box with criteria). Images work on every Jev, 1.13
+included, anywhere in the JSON (state, instructions, criteria); every model is weaker on images than text,
+so decompose image questions finely. All danger-zone features are dreamer-ready, not production-ready.
 
 **Box (Jev 1.14, images)** answers *where* something is: four edges as image fractions plus a `confidence`.
 It is an estimate, so it stays inside a `decide` node, no new node kind. The runtime checks each box, records

@@ -106,8 +106,10 @@ export const jevDecide: DecidePort = async (req) => {
 };
 ```
 
-`JEV_MODEL` is `jev-1.14.0`. `jevHeaders` adds `TypeSafe-Danger-Zone-Images: true` when the request has an
-image asset or a Box question; `checkJevRequest` refuses a Box on a pre-1.14 model or a Box with `criteria`.
+`JEV_MODEL` is `jev-1.14.0`. `jevHeaders(key, body, { longContext? })` adds `TypeSafe-Danger-Zone-Images: true`
+when the request has an image asset or a Box question (images work on 1.13 too), and
+`TypeSafe-Danger-Zone-Long-Context: true` only when asked; `checkJevRequest` refuses a Box on a pre-1.14 model
+(`jevSupportsBox`) or a Box with `criteria`.
 
 ## Box (Jev 1.14)
 

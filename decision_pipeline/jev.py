@@ -2,11 +2,19 @@
 Jev wire helpers — pure, no HTTP. The decide port stays the host's; these
 are the parts every Jev-backed port was writing by hand.
 
-Jev 1.14 adds images and the `box` question type. Both are "dreamer-ready"
-on TypeSafe's side: they need `jev-1.14.0` (or `jev-preview`) and the
-`TypeSafe-Danger-Zone-Images: true` header on every request that carries an
-image or a Box, and their format and accuracy may change between releases.
-Pin the exact version once a Box threshold is tuned.
+TypeSafe's "danger zone" features (Oct 2026) are opt-in per request through
+headers, and are dreamer-ready rather than production-ready: format and
+accuracy may change between releases.
+ - Images work on every Jev, `jev-1.13.0` included, behind
+   `TypeSafe-Danger-Zone-Images: true`. An image is an asset whose id can
+   appear anywhere the JSON does: state, instructions, even criteria.
+ - The `box` question type needs `jev-1.14.0` (or `jev-preview`), and the
+   same images header.
+ - Longer context than production allows, behind
+   `TypeSafe-Danger-Zone-Long-Context: true`. TypeSafe still recommends
+   keeping state short; so does this package.
+`jev-latest` moves to 1.14.0 a week after release: pin the exact version
+once a threshold is tuned.
 
 Requests and answers are plain dicts in the API's own (snake_case) keys.
 """
@@ -24,7 +32,8 @@ __all__ = [
     "JEV_PREVIEW_MODEL",
     "JEV_ENDPOINT",
     "JEV_IMAGES_HEADER",
-    "jev_supports_images",
+    "JEV_LONG_CONTEXT_HEADER",
+    "jev_supports_box",
     "jev_needs_images",
     "check_jev_request",
     "jev_headers",
@@ -38,15 +47,17 @@ JEV_PREVIEW_MODEL = "jev-preview"
 JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 #: Required on any request with an image asset or a Box question.
 JEV_IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
+#: Opt-in to context beyond the production limit. Less reliable; prefer a smaller state.
+JEV_LONG_CONTEXT_HEADER = "TypeSafe-Danger-Zone-Long-Context"
 
 _VERSION = re.compile(r"^jev-(\d+)\.(\d+)\.(\d+)$")
 
 
-def jev_supports_images(model: str) -> bool:
+def jev_supports_box(model: str) -> bool:
     """
-    Whether `model` answers Box questions and reads images. `jev-preview` does;
-    a pinned version does from 1.14.0; an alias this package cannot read
-    (`jev-latest`) is given the benefit of the doubt.
+    Whether `model` answers Box questions: `jev-preview`, or a pinned version
+    from 1.14.0. An alias this package cannot read (`jev-latest`) is given the
+    benefit of the doubt. Images alone need no particular version.
     """
     if model == JEV_PREVIEW_MODEL:
         return True
@@ -67,26 +78,31 @@ def jev_needs_images(body: Mapping[str, Any]) -> bool:
 def check_jev_request(body: Mapping[str, Any]) -> list[str]:
     """Every problem with a request before it is sent, all at once. Empty means send it."""
     problems: list[str] = []
+    has_box = False
     for key, q in (body.get("questions") or {}).items():
         if q.get("type") != "box":
             continue
+        has_box = True
         if "criteria" in q:
             problems.append(f'question "{key}": a box takes no criteria')
         if not str(q.get("instructions") or "").strip():
             problems.append(f'question "{key}": a box needs instructions naming the target and the image')
     model = str(body.get("model") or "")
-    if jev_needs_images(body) and not jev_supports_images(model):
-        problems.append(
-            f'model "{model}" does not answer box questions or read images; send "{JEV_MODEL}" or "{JEV_PREVIEW_MODEL}"'
-        )
+    if has_box and not jev_supports_box(model):
+        problems.append(f'model "{model}" does not answer box questions; send "{JEV_MODEL}" or "{JEV_PREVIEW_MODEL}"')
     return problems
 
 
-def jev_headers(api_key: str, body: Mapping[str, Any]) -> dict[str, str]:
-    """Auth, plus the images header when the request needs it. Content type is the caller's (JSON or multipart)."""
+def jev_headers(api_key: str, body: Mapping[str, Any], *, long_context: bool = False) -> dict[str, str]:
+    """
+    Auth, the images header when the request needs it, and the long-context
+    header only when asked for. Content type is the caller's (JSON or multipart).
+    """
     headers = {"authorization": f"Bearer {api_key}"}
     if jev_needs_images(body):
         headers[JEV_IMAGES_HEADER] = "true"
+    if long_context:
+        headers[JEV_LONG_CONTEXT_HEADER] = "true"
     return headers
 
 

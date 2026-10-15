@@ -136,6 +136,9 @@ async def jev_decide(req: DecideRequest) -> DecideResult:
                                         cost_usd=lambda u: u.get("input_tokens", 0) * 0.042e-6)
 ```
 
+`jev_headers(key, body, long_context=False)` adds the images header for an image or a Box (images work on
+1.13 too) and the long-context header only when asked; `check_jev_request` refuses a Box on a pre-1.14 model.
+
 ## Box (Jev 1.14)
 
 `DecideResult.boxes = {"mug": {"box": {"top", "bottom", "left", "right"}, "confidence"}}`; the runtime checks,

@@ -157,7 +157,7 @@ async def jev_decide(req: DecideRequest) -> DecideResult:
         "state": build_state(req.input),
         "questions": {**load_questions(req.questions), **probes},  # your fixed set + this run's probes
     }
-    if problems := check_jev_request(body):  # e.g. a Box sent to a pre-1.14 model
+    if problems := check_jev_request(body):  # e.g. a Box sent to jev-1.13.0
         raise ValueError("; ".join(problems))
     async with httpx.AsyncClient() as client:
         res = await client.post(JEV_ENDPOINT, headers=jev_headers(os.environ["TYPESAFE_API_KEY"], body), json=body)
@@ -168,7 +168,7 @@ async def jev_decide(req: DecideRequest) -> DecideResult:
 
 ## Box: find where something is in an image
 
-Jev 1.14 adds images and the **Box** question type: `` {"type": "box", "instructions": "the coffee mug in `photo`"} `` is answered with four edges as fractions of the image plus a `confidence`. TypeSafe calls images and Box *dreamer-ready*: they need `jev-1.14.0` (or `jev-preview`) and the `TypeSafe-Danger-Zone-Images: true` header, which `jev_headers` adds when a request carries an image or a Box. The full write-up is in the [root README](https://github.com/dipseth/decision-pipeline#box-find-where-something-is-in-an-image); in short:
+TypeSafe's October 2026 release puts three "danger zone" features behind per-request headers: **images** on every Jev, `jev-1.13.0` included (`TypeSafe-Danger-Zone-Images: true`), **longer context** (`TypeSafe-Danger-Zone-Long-Context: true`), and the **Box** question type on `jev-1.14.0` only: `` {"type": "box", "instructions": "the coffee mug in `photo`"} `` is answered with four edges as fractions of the image plus a `confidence`. They are dreamer-ready, not production-ready. `jev_headers` adds the images header when a request carries an image or a Box, and the long-context one only with `long_context=True`. The full write-up is in the [root README](https://github.com/dipseth/decision-pipeline#box-find-where-something-is-in-an-image); in short:
 
 - The decide port returns boxes under `DecideResult.boxes`. The runtime checks each one (a bad box fails the node), records it on the node as `boxes`, and mirrors its confidence into `distributions` as `[confidence]` (option `"confidence"`), so a gate thresholds a Box exactly like a Noul.
 - The edges reach code as `args.boxes["<decide node>"]["<question>"]` (`$boxes` in a JSON spec) and as an optional third argument to `interpret(distributions, args, boxes)`. The decide node's value keeps its shape.

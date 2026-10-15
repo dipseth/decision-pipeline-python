@@ -3,12 +3,13 @@ import pytest
 
 from decision_pipeline.jev import (
     JEV_IMAGES_HEADER,
+    JEV_LONG_CONTEXT_HEADER,
     JEV_MODEL,
     check_jev_request,
     jev_answers_to_decide_result,
     jev_headers,
     jev_needs_images,
-    jev_supports_images,
+    jev_supports_box,
 )
 
 MUG_REQUEST = {
@@ -22,12 +23,13 @@ MUG_REQUEST = {
 }
 
 
-def test_knows_which_models_read_images():
+def test_knows_which_models_answer_a_box():
     assert JEV_MODEL == "jev-1.14.0"
-    assert jev_supports_images("jev-1.14.0")
-    assert jev_supports_images("jev-1.15.2")
-    assert jev_supports_images("jev-preview")
-    assert not jev_supports_images("jev-1.13.0")
+    assert jev_supports_box("jev-1.14.0")
+    assert jev_supports_box("jev-1.15.2")
+    assert jev_supports_box("jev-preview")
+    assert jev_supports_box("jev-latest")
+    assert not jev_supports_box("jev-1.13.0")
 
 
 def test_sends_the_images_header_only_when_an_image_or_a_box_is_in_the_request():
@@ -35,10 +37,14 @@ def test_sends_the_images_header_only_when_an_image_or_a_box_is_in_the_request()
     assert jev_headers("k", MUG_REQUEST) == {"authorization": "Bearer k", JEV_IMAGES_HEADER: "true"}
     text_only = {"questions": {"q": {"type": "noul", "instructions": "Is `note` dry?"}}}
     assert jev_headers("k", text_only) == {"authorization": "Bearer k"}
+    assert jev_headers("k", text_only, long_context=True) == {"authorization": "Bearer k", JEV_LONG_CONTEXT_HEADER: "true"}
 
 
-def test_refuses_a_box_on_a_model_that_cannot_answer_one_and_a_box_with_criteria():
+def test_lets_images_through_on_1_13_but_refuses_a_box_there_and_a_box_with_criteria():
     assert check_jev_request(MUG_REQUEST) == []
+    images_on_113 = {**MUG_REQUEST, "model": "jev-1.13.0", "questions": {"mug_visible": MUG_REQUEST["questions"]["mug_visible"]}}
+    assert check_jev_request(images_on_113) == []
+    assert jev_needs_images(images_on_113)
     problems = check_jev_request(
         {**MUG_REQUEST, "model": "jev-1.13.0", "questions": {"mug": {"type": "box", "instructions": "the mug in `photo`", "criteria": {"a": "b"}}}}
     )
