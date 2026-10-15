@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Optional, Protocol, Sequence, Union
 
-from .types import BranchTaken, FeatureRow, OverrideRow, ProbeAnswer, ProbeQuestion, ScopeContext, ScoreConfigSpec
+from .types import BoxAnswer, BranchTaken, FeatureRow, OverrideRow, ProbeAnswer, ProbeQuestion, ScopeContext, ScoreConfigSpec
 
 if TYPE_CHECKING:  # pragma: no cover
     from .experiments import ManifestPatch
@@ -105,6 +105,10 @@ class DecideResult:
     distributions: dict[str, list[float]]
     #: Option keys per distribution, in the same order as its numbers.
     distribution_options: Optional[dict[str, list[str]]] = None
+    #: Box answers (Jev 1.14 `type: "box"`), keyed by question: `{"box": {top, bottom, left, right}, "confidence"}`.
+    #: The runtime checks each one (a bad box fails the node), records it, and mirrors its confidence into
+    #: `distributions` as `[confidence]` when the port did not, so a gate thresholds a box like a Noul.
+    boxes: Optional[dict[str, BoxAnswer]] = None
     #: What downstream nodes consume, when the node has no `interpret`.
     value: Any = None
     cost_usd: Optional[float] = None

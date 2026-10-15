@@ -8,4 +8,4 @@ python3 examples/wine/sample.py               # the cookbook's exact 2,000-revie
 TYPESAFE_API_KEY=… ANTHROPIC_API_KEY=… uv run python examples/wine/run.py --run r1 [--rounds 5]
 ```
 
-Every Jev answer is cached in `data/cache.jsonl` with the same key the TypeScript script uses, so a cache written by either language replays in the other.
+Every Jev answer is cached in `data/cache.jsonl` with the same key the TypeScript script uses, so a cache written by either language replays in the other. Both scripts default to `jev-1.14.0`; the published numbers were measured on 1.13, and the cache is keyed by model, so `JEV_MODEL=jev-1.13.0` replays them.

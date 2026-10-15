@@ -23,6 +23,8 @@ from .feedback import *  # noqa: F401,F403
 from .evals import *  # noqa: F401,F403
 from .features import *  # noqa: F401,F403
 from .probes import *  # noqa: F401,F403
+from .box import *  # noqa: F401,F403
+from .jev import *  # noqa: F401,F403
 from .bindings import *  # noqa: F401,F403
 from .version import *  # noqa: F401,F403
 from .experiments import *  # noqa: F401,F403

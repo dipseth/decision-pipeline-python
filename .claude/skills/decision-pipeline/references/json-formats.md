@@ -44,7 +44,7 @@ or `inputs` alone (output = the bindings). `fallback` is `{ "value" }`, `{ "expr
 
 Expression root: the node's `inputs` when declared, else an object keyed by the ids of nodes with an
 edge into it (a gate passes its input through, so downstream of gate `g` read `g.<name>`). Bindings:
-`$input`, `$t` (thresholds), `$primary`, `$branches`, `$probes` (never inside a gate), and the registry's
+`$input`, `$t` (thresholds), `$primary`, `$branches`, `$probes` (never inside a gate), `$boxes` (decide node -> its Box answers), and the registry's
 `$functions`. JSONata habits: a path over a one-element array yields the element (`x[]` keeps the array);
 a missing path is `undefined`, test with `$exists`. Expressions are time- and depth-boxed.
 

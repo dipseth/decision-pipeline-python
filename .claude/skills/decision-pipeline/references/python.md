@@ -119,27 +119,31 @@ Nodes, edges and feedback edges may also be dict literals with camelCase or snak
 
 ```python
 import os, httpx
-from decision_pipeline import DecideRequest, DecideResult
+from decision_pipeline import (
+    JEV_ENDPOINT, JEV_MODEL, DecideRequest, DecideResult,
+    check_jev_request, jev_answers_to_decide_result, jev_headers,
+)
 
 async def jev_decide(req: DecideRequest) -> DecideResult:
     probes = {k: {kk: v for kk, v in q.items() if kk != "why"} for k, q in req.probes.items()}
+    body = {"model": JEV_MODEL, "state": build_state(req.input), "questions": {**load_questions(req.questions), **probes}}
+    if problems := check_jev_request(body):
+        raise ValueError("; ".join(problems))
     async with httpx.AsyncClient(timeout=60) as http:
-        res = await http.post(
-            "https://api.typesafe.ai/v1/systemone",
-            headers={"authorization": f"Bearer {os.environ['TYPESAFE_API_KEY']}"},
-            json={"model": "jev-1.13.0", "state": build_state(req.input), "questions": {**load_questions(req.questions), **probes}},
-        )
-    body = res.json()
-    distributions, options = {}, {}
-    for key, a in body["answers"].items():
-        if isinstance(a.get("noul"), (int, float)):
-            distributions[key], options[key] = [a["noul"]], ["true"]
-        elif a.get("probabilities"):
-            options[key] = list(a["probabilities"].keys())
-            distributions[key] = list(a["probabilities"].values())
-    return DecideResult(distributions=distributions, distribution_options=options,
-                        cost_usd=body["usage"]["input_tokens"] * 0.042e-6)
+        res = await http.post(JEV_ENDPOINT, headers=jev_headers(os.environ["TYPESAFE_API_KEY"], body), json=body)
+    data = res.json()
+    return jev_answers_to_decide_result(data["answers"], usage=data["usage"],
+                                        cost_usd=lambda u: u.get("input_tokens", 0) * 0.042e-6)
 ```
+
+## Box (Jev 1.14)
+
+`DecideResult.boxes = {"mug": {"box": {"top", "bottom", "left", "right"}, "confidence"}}`; the runtime checks,
+records (`RunRecordNode.boxes`) and mirrors confidence into `distributions`. Later nodes read
+`args.boxes["locate"]["mug"]["box"]`; `interpret` may take a third `boxes` argument (a two-argument
+`interpret` still works and reads `args.boxes[args.node.id]`). Helpers: `box_to_pixels` (JS-style half-up
+rounding, so pixels match TS), `pad_box`, `box_iou`, `tile_boxes`, `box_from_tile`, `edge_check_questions`,
+`expand_box_edges`, `check_box_answer`. Fixture to copy: `tests/test_box.py`.
 
 ## Develop
 

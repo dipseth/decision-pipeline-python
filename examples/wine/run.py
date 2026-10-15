@@ -63,11 +63,13 @@ from decision_pipeline import (
     score_learned,
     spearman,
 )
+from decision_pipeline import JEV_MODEL as DEFAULT_JEV_MODEL
 from decision_pipeline.jsonata import jsonata_engine
 from decision_pipeline.testing import test_ports
 
 DATA = Path(__file__).resolve().parent / "data"
-JEV_MODEL = os.environ.get("JEV_MODEL") or "jev-1.13.0"
+# The table in README.md was measured on jev-1.13.0; set JEV_MODEL=jev-1.13.0 to reproduce it.
+JEV_MODEL = os.environ.get("JEV_MODEL") or DEFAULT_JEV_MODEL
 AUTHOR_MODEL = os.environ.get("AUTHOR_MODEL") or "claude-sonnet-5"
 USD_PER_JEV_TOKEN = 0.042e-6
 N_DEV, N_TEST, EXAMPLES, PROPOSALS, WORKERS = 1200, 800, 60, 18, 16

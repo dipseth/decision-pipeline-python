@@ -12,7 +12,7 @@ dicts for nodes, edges and feedback edges (see `node_from_dict`).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal, Mapping, Optional, Protocol, Sequence, Union
+from typing import Any, Awaitable, Callable, Literal, Mapping, Optional, Protocol, Sequence, TypedDict, Union
 
 # ---------------------------------------------------------------------------
 # Scope and rank
@@ -110,6 +110,26 @@ class ProbeSpec:
     max_chars: Optional[int] = None
 
 
+# --- box: where something is in an image (Jev 1.14; see ./box) ---------------
+
+
+class Box(TypedDict):
+    """Four edges as fractions of the image, origin top-left; each 0..1, `left < right`, `top < bottom`."""
+
+    top: float
+    bottom: float
+    left: float
+    right: float
+
+
+class BoxAnswer(TypedDict):
+    """One Box question's answer. There is no "not found": pair it with a Noul."""
+
+    box: Box
+    #: 0..1. Higher means the model is more sure. No recommended threshold yet: tune it.
+    confidence: float
+
+
 @dataclass(kw_only=True)
 class ProbeAnswer:
     """A probe beside its answer — what downstream non-gate nodes see."""
@@ -169,6 +189,9 @@ class NodeRunArgs:
     branches: Mapping[str, BranchTaken]
     #: Decide node id -> its answered probes. ALWAYS EMPTY for a gate.
     probes: Mapping[str, Sequence[ProbeAnswer]]
+    #: Decide node id -> its checked Box answers (Jev 1.14), for decide nodes that already ran and
+    #: asked one. Unlike probes, a gate sees these: a Box is a fixed question, so its confidence is tunable.
+    boxes: Mapping[str, Mapping[str, BoxAnswer]] = field(default_factory=dict)
     #: Cancellation, when the host supplied one (an `asyncio.Event` or anything with `is_set()`).
     signal: Any = None
 
@@ -217,8 +240,10 @@ class DecideNode(_NodeCommon):
     #: Named state blocks the host resolves and hands to the decide port.
     state: Optional[list[str]] = None
     accepts_features: Optional[bool] = None
-    #: Turns the port's raw distributions into the value downstream nodes consume. `(distributions, args) -> value`.
-    interpret: Optional[Callable[[dict[str, list[float]], NodeRunArgs], Any]] = None
+    #: Turns the port's raw distributions into the value downstream nodes consume. `(distributions, args) -> value`,
+    #: or `(distributions, args, boxes) -> value` to receive the node's checked Box answers (Jev 1.14) as in TS;
+    #: a two-argument `interpret` reads them as `args.boxes[args.node.id]`.
+    interpret: Optional[Callable[..., Any]] = None
     batched: Optional[bool] = None
 
 
