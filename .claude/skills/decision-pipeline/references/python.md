@@ -85,6 +85,10 @@ Nodes, edges and feedback edges may also be dict literals with camelCase or snak
   (its `on_failure` decides) and `args.signal` / `request.signal` (an `AbortSignal` with `.aborted`) is
   aborted; a late answer is discarded. Raise `NodeSkipped("reason")` from a body or port to be recorded
   as skipped. Observers may implement `on_run_fail(event)` for a run that threw.
+- **Box answers** (Jev 1.14) come back from the decide port as `boxes=` on `DecideResult` (or a `boxes` key);
+  the runtime checks and records them and mirrors each confidence into `distributions`. `interpret` may be
+  `(distributions, args)` or `(distributions, args, boxes)`; a two-argument one reads them as
+  `args.boxes[args.node.id]`. Downstream bodies read `args.boxes["<decide node>"]["<question>"]`.
 - `record.to_dict()` gives the JSON record; `pipeline.to_json()` gives the TS `PipelineJSON` dict.
 
 ## Surface, by module
@@ -93,7 +97,7 @@ Nodes, edges and feedback edges may also be dict literals with camelCase or snak
 |---|---|
 | `define` | `define_pipeline(spec | **kwargs)`, `validate_pipeline`, `validate_patch`, `ancestors_of`, `PipelineSpec`, `EvalSpec`, `Overridable`, `DecisionPipeline.to_json()` / `.order` |
 | `run` | `await run_pipeline(pipeline, raw_input, ports=None, options=None, **options)` → `RunResult(output, run_id, run_key, version, route, confidence, decided_by, arms, record, skipped, scope_rejections, patch_applied)`; `apply_override` |
-| `types` | `ReadNode`, `DecideNode`, `GenerateNode`, `CodeNode`, `GateNode`, `StoreNode`, `Edge`, `EdgeGuard`, `FeedbackEdge`, `ScoreConfigSpec`, `ProbeSpec`, `ToolSpec`, `ToolSelectable`, `NodeRunArgs(input, from_, in_, primary, ctx, thresholds, node, branches, probes, signal)`, `BranchTaken`, `FeatureRow`, `OverrideRow`, `SCOPES`, `RANKS` |
+| `types` | `ReadNode`, `DecideNode`, `GenerateNode`, `CodeNode`, `GateNode`, `StoreNode`, `Edge`, `EdgeGuard`, `FeedbackEdge`, `ScoreConfigSpec`, `ProbeSpec`, `ToolSpec`, `ToolSelectable`, `NodeRunArgs(input, from_, in_, primary, ctx, thresholds, node, branches, probes, boxes, signal)`, `BranchTaken`, `FeatureRow`, `OverrideRow`, `SCOPES`, `RANKS` |
 | `ports` | `PipelinePorts`, `RunOptions`, `DecideRequest/DecideResult`, `GenerateRequest/GenerateResult`, `StoreRequest`, `ScoreRequest`, `QueueRequest/QueueResult`, `DatasetRunRequest`, `PromptResolution`, `RootSpanOpts`, `NodeSpanOpts` |
 | `testing` | `test_ports(decide=, generate=, scope=, prompts=, registry=, env=, prompt_config=, knowledge_version=, trace_id=)` → `TestPorts` (+ `tracer.spans/roots`, `observed`, `store_writes`, `recorded`, `decide_calls`, `generate_calls`, `scores_written`, `queue_items`, `dataset_runs`); `recording_tracer`, `scripted_decide`, `scripted_generate`, `collecting_store`, `memory_cache`, `collecting_records`, `collecting_observer`, `throwing_observer`, `collecting_scores`, `collecting_queue`, `collecting_dataset`, `memory_trial_store`, `static_scope`, `static_prompts`, `static_registry`, `stepping_clock` |
 | `feedback` | `await submit_feedback(pipeline, FeedbackSubmission(...) | dict, ports)`, `enqueue_for_hand_read(pipeline, run_id=, reason=, lane=, ports=)`, `category_value` |
@@ -101,6 +105,8 @@ Nodes, edges and feedback edges may also be dict literals with camelCase or snak
 | `record` | `RunRecord`, `RunRecordNode`, `RunLabel`, `define_gate_metric`, `aggregate_gate_metric`, `clear_gate_metrics` |
 | `evals` | `await record_pipeline_eval_run(pipeline, PipelineEvalRun(rows=[EvalRow(...)]), ports)`, `eval_run_name` |
 | `probes` | `collect_probes`, `probe_answers`, `probe_features`, `MAX_PROBES`, `probe_question_schema` |
+| `box` | `check_box_answer`, `box_width`, `box_height`, `box_area`, `box_center`, `pad_box`, `box_to_pixels`, `box_iou`, `tile_boxes`, `box_from_tile`, `edge_check_questions`, `expand_box_edges`, `box_features`, `BOX_CONFIDENCE_OPTION`; `Box`, `BoxAnswer` |
+| `jev` | `JEV_MODEL` (`jev-1.14.0`), `JEV_PREVIEW_MODEL`, `JEV_ENDPOINT`, `JEV_IMAGES_HEADER`, `JEV_LONG_CONTEXT_HEADER`, `jev_supports_box`, `jev_needs_images`, `check_jev_request(body) -> list[str]`, `jev_headers(api_key, body, *, long_context=False)`, `jev_answers_to_decide_result(answers, usage=, cost_usd=)` |
 | `bindings` | `parse_input_ref`, `resolve_inputs`, `binding_problems` |
 | `experiments` / `patch` | `ManifestPatch`, `GuardPatch`, `ExperimentSpec`, `assign_arm`, `merge_patches`, `apply_manifest_patch`, `manifest_patch_from_dict` |
 | `spec` | `compile_pipeline_spec(spec_dict, registry, engine)` → `CompileResult(pipeline, problems)`, `pipeline_from_spec`, `define_registry(primitives=, functions=, schemas=, features=)`, `define_primitive(id=, version=, describe=, args=, run=)`, `describe_registry`, `pipeline_spec_json_schema()`, `merge_registries` |
@@ -117,36 +123,42 @@ Nodes, edges and feedback edges may also be dict literals with camelCase or snak
 
 ## A decide port backed by Jev
 
+The wire helpers ship with the package (same names as TS in snake_case); the port is just the HTTP call.
+
 ```python
 import os, httpx
-from decision_pipeline import (
-    JEV_ENDPOINT, JEV_MODEL, DecideRequest, DecideResult,
-    check_jev_request, jev_answers_to_decide_result, jev_headers,
-)
+from decision_pipeline import (JEV_ENDPOINT, JEV_MODEL, DecideRequest, DecideResult,
+                               check_jev_request, jev_answers_to_decide_result, jev_headers)
 
 async def jev_decide(req: DecideRequest) -> DecideResult:
-    probes = {k: {kk: v for kk, v in q.items() if kk != "why"} for k, q in req.probes.items()}
-    body = {"model": JEV_MODEL, "state": build_state(req.input), "questions": {**load_questions(req.questions), **probes}}
-    if problems := check_jev_request(body):
+    probes = {slot: {k: v for k, v in q.items() if k != "why"} for slot, q in req.probes.items()}  # `why` is for humans
+    body = {
+        "model": JEV_MODEL,                                          # "jev-1.14.0"; pin it once thresholds are tuned
+        "state": build_state(req.input),
+        "questions": {**load_questions(req.questions), **probes},  # your fixed set + this run's probes
+    }
+    if problems := check_jev_request(body):                          # e.g. a Box sent to jev-1.13.0
         raise ValueError("; ".join(problems))
-    async with httpx.AsyncClient(timeout=60) as http:
-        res = await http.post(JEV_ENDPOINT, headers=jev_headers(os.environ["TYPESAFE_API_KEY"], body), json=body)
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(JEV_ENDPOINT, headers=jev_headers(os.environ["TYPESAFE_API_KEY"], body), json=body)
     data = res.json()
+    # noul -> [p], choice/score -> one probability per option, box -> boxes=
     return jev_answers_to_decide_result(data["answers"], usage=data["usage"],
                                         cost_usd=lambda u: u.get("input_tokens", 0) * 0.042e-6)
 ```
 
-`jev_headers(key, body, long_context=False)` adds the images header for an image or a Box (images work on
-1.13 too) and the long-context header only when asked; `check_jev_request` refuses a Box on a pre-1.14 model.
+`jev_headers` adds the images header when the request carries an image asset or a Box, and the long-context
+header only with `long_context=True`; `check_jev_request` refuses a Box on a pre-1.14 model.
 
 ## Box (Jev 1.14)
 
 `DecideResult.boxes = {"mug": {"box": {"top", "bottom", "left", "right"}, "confidence"}}`; the runtime checks,
 records (`RunRecordNode.boxes`) and mirrors confidence into `distributions`. Later nodes read
 `args.boxes["locate"]["mug"]["box"]`; `interpret` may take a third `boxes` argument (a two-argument
-`interpret` still works and reads `args.boxes[args.node.id]`). Helpers: `box_to_pixels` (JS-style half-up
-rounding, so pixels match TS), `pad_box`, `box_iou`, `tile_boxes`, `box_from_tile`, `edge_check_questions`,
-`expand_box_edges`, `check_box_answer`. Fixture to copy: `tests/test_box.py`.
+`interpret` still works and reads `args.boxes[args.node.id]`). A `derive` node after a Box does
+`box_to_pixels(pad_box(args.boxes["locate"]["mug"]["box"], args.thresholds["pad"]), w, h)`. Helpers:
+`box_to_pixels` (JS-style half-up rounding, so pixels match TS), `pad_box`, `box_iou`, `tile_boxes`,
+`box_from_tile`, `edge_check_questions`, `expand_box_edges`, `check_box_answer`. Fixture to copy: `tests/test_box.py`.
 
 ## Develop
 

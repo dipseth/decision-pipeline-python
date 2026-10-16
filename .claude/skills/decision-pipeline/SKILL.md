@@ -65,7 +65,7 @@ Work in this order; each step is checkable before the next.
    | Kind | Job | Notes |
    |---|---|---|
    | `read` | load reference data (`load` body) | may `providesFeatures` |
-   | `decide` | ask a model for probabilities (`questions` names a fixed question set; `interpret` turns distributions into a value) | never branches; may declare `probes` |
+   | `decide` | ask a model for probabilities (`questions` names a fixed question set; `interpret(distributions, args, boxes)` turns them into a value) | never branches; may declare `probes`; may ask Box questions (Jev 1.14), answered under `boxes` |
    | `generate` | ask a model to write (`prompt`, `route`, optional `tools`) | only on the branch that needs it |
    | `code` | `role: "transform" | "validate" | "derive"` with a `run` body, or `role: "gate"` with `branches` + `thresholds` | only a gate branches; a transform may also declare `thresholds` it applies |
    | `store` | persist the fact (`target`, `scope`) | its output is not the fact |
@@ -112,32 +112,36 @@ about one state in one request. Rules learned in production:
 - **Tune each threshold against its own question type.** A yes/no (`noul`) probability is absolute; a
   `choice` is relative to its options.
 - **Math, counting, dates and filtering go in code**, not in a question.
-- **Pin the model version** (`jev-1.14.0`, the package's `JEV_MODEL`) once thresholds are tuned; moving
-  model versions is a challenger, re-tune gates on its records. `jev-latest` moves to 1.14.0 a week after
-  release, so a pipeline on the alias changes model under its thresholds.
+- **Pin the model version** (`jev-1.14.0`, never `jev-latest` or `jev-preview`) once thresholds are
+  tuned. Aliases move underneath tuned gates; moving 1.13 → 1.14 is a challenger like any change.
 
-The package ships the wire helpers so a port is just the HTTP call: `jevAnswersToDecideResult` /
-`jev_answers_to_decide_result` (noul → `[p]`, choice/score → per option, box → `boxes`), `jevHeaders` (adds
-`TypeSafe-Danger-Zone-Images: true` for an image or a Box; `TypeSafe-Danger-Zone-Long-Context: true` only when
-asked) and `checkJevRequest` (a Box on a pre-1.14 model, a Box with criteria). Images work on every Jev, 1.13
-included, anywhere in the JSON (state, instructions, criteria); every model is weaker on images than text,
-so decompose image questions finely. All danger-zone features are dreamer-ready, not production-ready.
+The package ships the Jev wire helpers so the port is just the fetch: `JEV_MODEL`, `JEV_ENDPOINT`,
+`checkJevRequest(body)` (every problem at once, e.g. a Box sent to 1.13), `jevHeaders(apiKey, body,
+{ longContext? })` (auth plus the `TypeSafe-Danger-Zone-*` headers only when the request needs them) and
+`jevAnswersToDecideResult(answers, { usage, costUsd })`. Same names in snake_case in Python. Images work on
+every Jev, 1.13 included, anywhere in the JSON (state, instructions, criteria); every model is weaker on
+images than text, so decompose image questions finely. TypeSafe calls the images, Box and long-context
+features dreamer-ready, not production-ready: format and accuracy may still change.
 
-**Box (Jev 1.14, images)** answers *where* something is: four edges as image fractions plus a `confidence`.
-It is an estimate, so it stays inside a `decide` node, no new node kind. The runtime checks each box, records
-it as `boxes` on the node, mirrors its confidence into `distributions` as `[confidence]` (so a gate thresholds
-it like a Noul), and adds `<node>.<q>.box_area/box_cx/box_cy` features. Code reads the edges from
-`args.boxes.<decide>.<q>` (`$boxes` in JSON specs, or `interpret`'s third argument). A Box never says "not
-found": ask a Noul beside it and gate on both. Cropping, padding (`padBox`), tiling (`tileBoxes`,
-`boxFromTile`) and edge checks (`edgeCheckQuestions`, `expandBoxEdges`) are code; a redrawn box scored with
-`boxIoU` is a natural `score` feedback edge. Probes stay noul/choice/score.
+**Box** (`type: "box"`, `jev-1.14.0` only; images themselves work on 1.13 too) answers "where is X in
+`photo`" with four edges as fractions of the image plus a `confidence`. It is still an estimate, so there
+is no new node kind: the port returns it under `boxes`, the runtime checks it (edges in 0..1, `left <
+right`, `top < bottom`; a bad box fails the node, so `onFailure` decides), records it, and mirrors the
+confidence into `distributions` as `[confidence]` (option `"confidence"`), so a gate thresholds it like
+a Noul. The edges reach code only: `interpret`'s third argument, `args.boxes.<decideNode>.<question>`
+downstream (`$boxes` in a spec). There is no "not found": pair every Box with a Noul ("is there a mug
+in `photo`?") in the same request and let the gate ignore the box when it is low. Geometry stays in
+code: `boxToPixels`, `padBox`, `boxIoU` (a natural `score` feedback edge), `tileBoxes` + `boxFromTile`
+(small target: a Choice over tiles, then a Box on the tile), `edgeCheckQuestions` + `expandBoxEdges`
+(one Noul per edge on the crop). No recommended Box threshold yet: tune it on your images.
 
 **Probes** let an upstream `generate` node write a few extra questions for *this* input
 (`probes: { from, max, paths }` on the decide node). The runtime validates them (schema, cap of 8,
 duplicates, length, a real state path), records their text on the run, and withholds their answers from
 every gate, so a threshold is only ever tuned on questions that exist on every run. Forbid the writer from
 re-asking the decision itself; ask for observable facts. Probes have to earn their cost in a trial like
-any change.
+any change. Probes are Noul, Choice or Score, never Box: a box for a target is a fixed question, so its
+confidence can be tuned.
 
 ## 5. Improve it safely
 
@@ -173,13 +177,18 @@ versions, resolved thresholds, knowledge version and arms), `run_id` (this attem
 `run_key` (the durable identity of the work, stable across retries), `fact_route` (branches joined,
 `direct` or `writer/quick`), `fact_confidence`, `nodes[]` (per node: `input_hash`, `ms`, `cost_usd`,
 `cost_reported`, `cached`, `skipped` reason, gate `branch` + `branch_reason` + `thresholds`, decide
-`distributions` + `distribution_options` + `probes`, generate `tools`), and a flat numeric `features`
-map (`<node>.<question>.margin/entropy/top`, probe aggregates, `nodes_ran`, `cost_usd`). A threshold can
+`distributions` + `distribution_options` + `probes` + `boxes`, generate `tools`), and a flat numeric `features`
+map (`<node>.<question>.margin/entropy/top`, `.box_area/.box_cx/.box_cy` for a Box, probe aggregates,
+`nodes_ran`, `cost_usd`). A threshold can
 be re-tuned from records alone, with zero model calls.
 
 ## 7. Pitfalls
 
 - A gate body sees `args.probes = {}`; only non-gate nodes and `generate` requests get probe answers.
+- A gate does see `args.boxes` (a Box is a fixed question), but branch on the mirrored confidence in
+  `primary`, not on the edges; the edges are for crop/pad code.
+- A Box about something absent still returns four edges; a malformed one (edge outside 0..1, inverted)
+  fails the decide node rather than reaching a gate.
 - `result` names the node that **produces** the fact, never the `store` node.
 - `derived` and `queue` feedback need a registered lane; queues are capped per Langfuse project, lanes
   are free (`defineReviewLane({ lane, queue: PIPELINE_REVIEW_QUEUE, scoreConfig })`).

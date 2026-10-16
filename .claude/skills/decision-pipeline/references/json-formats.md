@@ -44,8 +44,8 @@ or `inputs` alone (output = the bindings). `fallback` is `{ "value" }`, `{ "expr
 
 Expression root: the node's `inputs` when declared, else an object keyed by the ids of nodes with an
 edge into it (a gate passes its input through, so downstream of gate `g` read `g.<name>`). Bindings:
-`$input`, `$t` (thresholds), `$primary`, `$branches`, `$probes` (never inside a gate), `$boxes` (decide node -> its Box answers), and the registry's
-`$functions`. JSONata habits: a path over a one-element array yields the element (`x[]` keeps the array);
+`$input`, `$t` (thresholds), `$primary`, `$branches`, `$probes` (never inside a gate), `$boxes` (decide node id →
+its Box answers, e.g. `$boxes.locate.mug.box.left`), and the registry's `$functions`. JSONata habits: a path over a one-element array yields the element (`x[]` keeps the array);
 a missing path is `undefined`, test with `$exists`. Expressions are time- and depth-boxed.
 
 `describeRegistry(registry)` and `pipelineSpecJsonSchema()` are what a model is handed to write a spec.
@@ -111,3 +111,7 @@ smallest detectable effect and the sample size `plan.minEffect` would need.
   "consumed_feedback_ids": [], "arms": {}, "parent_run_id": null, "assignment_unit": null, "assignment_hash": null,
   "created_at": "2023-11-14T22:13:20.000Z" }
 ```
+
+A decide node that asked a Box (Jev 1.14) also carries `"boxes": { "<question>": { "box": { "top", "bottom",
+"left", "right" }, "confidence" } }`; its confidence appears in `distributions` as `[confidence]` with option
+`"confidence"`, and `features` gains `<node>.<question>.box_area`, `.box_cx`, `.box_cy` beside `.top`.

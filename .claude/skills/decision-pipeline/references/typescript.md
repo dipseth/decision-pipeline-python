@@ -61,6 +61,8 @@ const { output, route, record } = await runPipeline(triage, { id: "t-42", text: 
 | `record` | `RunRecord`, `RunRecordNode`, `RunLabel`, `defineGateMetric(name, fn)`, `aggregateGateMetric` |
 | `eval` | `recordPipelineEvalRun(pipeline, { rows, traceId, experiment?, arm?, extraScores? }, ports)`; `evalRunName` |
 | `probes` | `collectProbes`, `probeAnswers`, `probeFeatures`, `MAX_PROBES` (8), `probeQuestionSchema` |
+| `box` | `checkBoxAnswer`, `boxWidth`, `boxHeight`, `boxArea`, `boxCenter`, `padBox`, `boxToPixels`, `boxIoU`, `tileBoxes`, `boxFromTile`, `edgeCheckQuestions`, `expandBoxEdges`, `boxFeatures`, `BOX_CONFIDENCE_OPTION`, `BOX_EDGES`; types `Box`, `BoxAnswer`, `BoxQuestion`, `BoxEdge` |
+| `jev` | `JEV_MODEL` (`jev-1.14.0`), `JEV_PREVIEW_MODEL`, `JEV_ENDPOINT`, `JEV_IMAGES_HEADER`, `JEV_LONG_CONTEXT_HEADER`, `jevSupportsBox`, `jevNeedsImages`, `checkJevRequest(body): string[]`, `jevHeaders(apiKey, body, { longContext? })`, `jevAnswersToDecideResult(answers, { usage?, costUsd? })`; types `JevRequestBody`, `JevQuestion`, `JevAsset`, `JevAnswer`, `JevUsage` |
 | `bindings` | `parseInputRef`, `resolveInputs`, `bindingProblems` |
 | `experiments` / `patch` | `ManifestPatch { thresholds, prompts, questions, routes, tools, guards }`, `assignArm`, `mergePatches`, `applyManifestPatch` |
 | `spec` | `compilePipelineSpec(json, registry, engine)` → `{ pipeline, problems }`, `pipelineFromSpec` (throws), `defineRegistry({ primitives, functions, schemas, features })`, `definePrimitive({ id, version, describe, args, run })`, `describeRegistry`, `pipelineSpecJsonSchema()` |
@@ -78,38 +80,46 @@ const { output, route, record } = await runPipeline(triage, { id: "t-42", text: 
 ## Node bodies
 
 Every body receives `NodeRunArgs { input, from, in, primary, ctx, thresholds, node, branches, probes, boxes, signal }`.
+`boxes` is decide node id → its checked Box answers (`{ box: { top, bottom, left, right }, confidence }`); a gate sees it too.
 `signal` is an `AbortSignal` that aborts when the run is cancelled or the node's `timeoutMs` passes; a
 port should pass it to its HTTP call. Throw `NodeSkipped(reason)` to opt out of running (recorded as a skip);
 a `NodeTimeoutError` is what `onFailure` sees past the deadline.
 `primary` is the first inbound node's output (the pipeline input at a root). A gate returns a branch name
 or `{ branch, reason?, confidence? }`; `confidence` becomes `fact_confidence`. `interpret(distributions, args, boxes)`
-on a decide node turns raw distributions into the value downstream sees; the record keeps the distributions.
-`boxes` (and `args.boxes.<decideNode>.<question>` for every later node, gates included) holds checked Box answers.
+on a decide node turns raw distributions into the value downstream sees; the record keeps the distributions,
+and a Box's confidence is already in `distributions` as `[confidence]`. `DecideResult` is
+`{ distributions, distributionOptions?, boxes?, value?, costUsd? }`.
 
 ## A decide port backed by Jev
 
+The wire helpers ship with the package; the port is just the fetch. `jevHeaders` adds the images header
+when the request carries an image asset or a Box, and the long-context header only on `{ longContext: true }`.
+
 ```ts
-import { JEV_ENDPOINT, JEV_MODEL, checkJevRequest, jevAnswersToDecideResult, jevHeaders, type DecidePort } from "@rivers/decision-pipeline";
+import { JEV_ENDPOINT, JEV_MODEL, checkJevRequest, jevAnswersToDecideResult, jevHeaders,
+         type DecidePort, type JevRequestBody } from "@rivers/decision-pipeline";
 
 export const jevDecide: DecidePort = async (req) => {
-  const probes = Object.fromEntries(Object.entries(req.probes).map(([k, { why, ...q }]) => [k, q]));
-  const body = { model: JEV_MODEL, state: buildState(req.input), questions: { ...loadQuestions(req.questions), ...probes } };
-  const problems = checkJevRequest(body);
-  if (problems.length) throw new Error(problems.join("; "));
+  const probes = Object.fromEntries(Object.entries(req.probes).map(([k, { why, ...q }]) => [k, q])); // `why` is for humans
+  const body: JevRequestBody = {
+    model: JEV_MODEL,                                             // "jev-1.14.0"; pin it once thresholds are tuned
+    state: buildState(req.input),
+    questions: { ...loadQuestions(req.questions), ...probes },    // your fixed set + this run's probes
+  };
+  const problems = checkJevRequest(body);                         // e.g. a Box sent to jev-1.13.0
+  if (problems.length > 0) throw new Error(problems.join("; "));
   const res = await fetch(JEV_ENDPOINT, {
-    method: "POST",
+    method: "POST", signal: req.signal,
     headers: { "content-type": "application/json", ...jevHeaders(process.env.TYPESAFE_API_KEY!, body) },
     body: JSON.stringify(body),
   });
   const { answers, usage } = await res.json();
+  // noul -> [p], choice/score -> one probability per option, box -> `boxes`
   return jevAnswersToDecideResult(answers, { usage, costUsd: (u) => (u.input_tokens ?? 0) * 0.042e-6 });
 };
 ```
 
-`JEV_MODEL` is `jev-1.14.0`. `jevHeaders(key, body, { longContext? })` adds `TypeSafe-Danger-Zone-Images: true`
-when the request has an image asset or a Box question (images work on 1.13 too), and
-`TypeSafe-Danger-Zone-Long-Context: true` only when asked; `checkJevRequest` refuses a Box on a pre-1.14 model
-(`jevSupportsBox`) or a Box with `criteria`.
+`checkJevRequest` refuses a Box on a pre-1.14 model (`jevSupportsBox`) or a Box with `criteria`.
 
 ## Box (Jev 1.14)
 
@@ -117,9 +127,12 @@ A Box question (`{ type: "box", instructions: "the coffee mug in \`photo\`" }`) 
 `{ box: { top, bottom, left, right }, confidence }`, edges as fractions of the image. The port returns them as
 `DecideResult.boxes`; the runtime checks them (bad box = node failure), records `boxes` on the node, mirrors each
 confidence into `distributions[key] = [confidence]` (option `"confidence"`), and adds `<node>.<q>.box_area`,
-`.box_cx`, `.box_cy` features. A Box never says "not found": ask a Noul beside it and gate on both. Helpers in
-`./box`: `boxToPixels`, `padBox`, `boxIoU`, `tileBoxes`, `boxFromTile`, `edgeCheckQuestions`, `expandBoxEdges`,
-`checkBoxAnswer`. Fixture to copy: `src/box.test.ts` (Noul + Box → gate → crop / pad_crop / none).
+`.box_cx`, `.box_cy` features. A Box never says "not found": ask a Noul beside it and gate on both. In a
+manifest: `locate: { kind: "decide", questions: "jev-mug-locate", version: "1" }` where the set holds
+`mug_visible: noul` and `mug: box`; the gate reads `primary.mug_visible[0]` and `primary.mug[0]` (the confidence)
+against two thresholds; a `derive` node after it does
+`boxToPixels(padBox(args.boxes.locate.mug.box, thresholds.pad), input.width, input.height)`. Fixture to copy:
+`src/box.test.ts` (Noul + Box → gate → crop / pad_crop / none).
 
 ## Develop
 
