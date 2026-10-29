@@ -23,6 +23,8 @@ dependencies = ["pydantic>=2.5"]
 [project.optional-dependencies]
 # `decision_pipeline.jsonata` — the JSONata ExpressionEngine for JSON specs. Bring it yourself, like the TS package.
 jsonata = ["jsonata-python>=0.6"]
+# The official TypeSafe client, for a Jev-backed decide port. `decision_pipeline.jev` reads its objects but never imports it.
+typesafe = ["typesafe-sdk>=0.7.5"]
 
 [project.urls]
 Homepage = "https://github.com/dipseth/decision-pipeline-python"
@@ -30,7 +32,7 @@ Repository = "https://github.com/dipseth/decision-pipeline-python"
 "TypeScript package" = "https://github.com/dipseth/decision-pipeline"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "jsonata-python>=0.6", "mypy>=1.10"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "jsonata-python>=0.6", "mypy>=1.10", "typesafe-sdk>=0.7.5"]
 
 [build-system]
 requires = ["hatchling"]

@@ -166,6 +166,31 @@ async def jev_decide(req: DecideRequest) -> DecideResult:
     return jev_answers_to_decide_result(data["answers"], usage=data["usage"], cost_usd=lambda u: u.get("input_tokens", 0) * 0.042e-6)
 ```
 
+With the official [`typesafe-sdk`](https://docs.typesafe.ai/sdk/python) (`pip install "decision-pipeline[typesafe]"`) the port is shorter: the client handles auth, retries, images as multipart and compression. Two things it does not do: send the danger-zone headers (`jev_extra_headers` does), and pin a model (its default is `jev-latest`; pass `JEV_MODEL`). The helpers read SDK objects (`Noul`, `Box`, `Image`, `SystemOneResponse`) as well as plain dicts.
+
+```python
+from typesafe_sdk import AsyncTypeSafeClient
+
+from decision_pipeline import (
+    JEV_MODEL, DecideRequest, DecideResult,
+    check_jev_request, jev_extra_headers, jev_response_to_decide_result,
+)
+
+client = AsyncTypeSafeClient()  # reads TYPESAFE_API_KEY; reuse one client across requests
+
+
+async def jev_decide(req: DecideRequest) -> DecideResult:
+    state = build_state(req.input)  # may hold typesafe_sdk.Image objects anywhere
+    questions = {**load_questions(req.questions), **{s: {k: v for k, v in q.items() if k != "why"} for s, q in req.probes.items()}}
+    if problems := check_jev_request({"model": JEV_MODEL, "questions": questions}):
+        raise ValueError("; ".join(problems))
+    res = await client.system_one(
+        state=state, questions=questions, model=JEV_MODEL,
+        extra_headers=jev_extra_headers(questions, state),  # images header for a Box or an Image; long_context=True to opt in
+    )
+    return jev_response_to_decide_result(res, cost_usd=lambda u: u.get("input_tokens", 0) * 0.042e-6)
+```
+
 ## Box: find where something is in an image
 
 TypeSafe's October 2026 release puts three "danger zone" features behind per-request headers: **images** on every Jev, `jev-1.13.0` included (`TypeSafe-Danger-Zone-Images: true`), **longer context** (`TypeSafe-Danger-Zone-Long-Context: true`), and the **Box** question type on `jev-1.14.0` only: `` {"type": "box", "instructions": "the coffee mug in `photo`"} `` is answered with four edges as fractions of the image plus a `confidence`. They are dreamer-ready, not production-ready. `jev_headers` adds the images header when a request carries an image or a Box, and the long-context one only with `long_context=True`. The full write-up is in the [root README](https://github.com/dipseth/decision-pipeline#box-find-where-something-is-in-an-image); in short:
